@@ -13,15 +13,20 @@ const (
 )
 
 const (
-	ScheduleCronExp = "0 d% * * *"
+	ScheduleCronExp = "0 %d * * *"
 )
 
 const  ImagePullSecret  = "default-secret"
 
 const (
-	EnvHpa = "CRONHPA_Name"
-	EnvCapacity = "CRONHPA_CAPACITY"
+	EnvHpaName = "CRONHPA_NAME"
+	EnvHpaNamespace = "CRONHPA_NAMESPACE"
+	EnvHpaCapacity = "CRONHPA_CAPACITY"
 
 	EnvProphetImage = "PROPHET_IMAGE"
 	EnvProphetAccount = "PROPHET_ACCOUNT"
+)
+
+const (
+	AdminNamespace = "kube-admin"
 )

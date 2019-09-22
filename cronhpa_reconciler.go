@@ -4,17 +4,24 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/golang/glog"
 	cronhpav1 "github.com/iyacontrol/shareit/pkg/apis/cronhpa/v1"
-	batchv1beta1 "k8s.io/api/batch/v1beta1"
 	batchv1 "k8s.io/api/batch/v1"
+	batchv1beta1 "k8s.io/api/batch/v1beta1"
 	"k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+)
+
+var (
+	SuccessfulJobsHistoryLimit int32 = 1
+	FailedJobsHistoryLimit int32 = 1
 )
 
 type cronhpaReconciler struct {
@@ -41,8 +48,8 @@ func (r *cronhpaReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 
 	// delete reletaed cronjobs
 	var jobs batchv1beta1.CronJobList
-	err := r.List(ctx, &jobs, client.MatchingLabels(map[string]string{
-		"app": ch.Spec.HpaName,
+	err := r.List(ctx, &jobs, client.InNamespace(AdminNamespace), client.MatchingLabels(map[string]string{
+		"app": fmt.Sprintf("%s-%s",ch.Namespace, ch.Spec.HpaName),
 	}))
 	if err != nil {
 		glog.Errorf("unable to list cronjon: %v", err)
@@ -50,12 +57,29 @@ func (r *cronhpaReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 	}
 
 	for _, job := range jobs.Items {
-		err = r.Delete(ctx, &job)
+		err = r.Delete(ctx, &job, client.PropagationPolicy(metav1.DeletePropagationBackground))
 		if err != nil {
 			glog.Errorf("unable to delete cronjob: %v", err)
 			return ctrl.Result{}, err
 		}
 	}
+
+	time.Sleep(time.Second * 10)
+
+
+		//channel := make(chan struct{})
+		//wait.Until(func(){
+		//	var jobs batchv1beta1.CronJobList
+		//	checkErr := r.List(ctx, &jobs, client.MatchingLabels(map[string]string{
+		//		"app": ch.Spec.HpaName,
+		//	}))
+		//
+		//	if errors.IsNotFound(checkErr) {
+		//		close(channel)
+		//	}
+		//
+		//}, 5*time.Second, channel)
+
 
 	if cronHpaErr != nil {
 		glog.Infof("%s cronhpa has been deleted", ch.Name)
@@ -72,14 +96,16 @@ func (r *cronhpaReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 					APIVersion: CronJobApiVersion,
 				},
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      fmt.Sprintf("%s-%d", ch.Spec.HpaName, cycle.Hour),
-					Namespace: ch.Namespace,
+					Name:      fmt.Sprintf("%s-%s-%d", ch.Namespace, ch.Spec.HpaName, cycle.Hour),
+					Namespace: AdminNamespace,
 					Labels: map[string]string{
-						"app": ch.Spec.HpaName,
+						"app": fmt.Sprintf("%s-%s",ch.Namespace, ch.Spec.HpaName),
 					},
 				},
 				Spec: batchv1beta1.CronJobSpec{
 					Schedule: fmt.Sprintf(ScheduleCronExp, cycle.Hour),
+					SuccessfulJobsHistoryLimit: &SuccessfulJobsHistoryLimit,
+					FailedJobsHistoryLimit: &FailedJobsHistoryLimit,
 					JobTemplate: batchv1beta1.JobTemplateSpec{
 						Spec: batchv1.JobSpec{
 							Template:                v1.PodTemplateSpec{
@@ -91,11 +117,15 @@ func (r *cronhpaReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 											ImagePullPolicy: v1.PullIfNotPresent,
 											Env: []v1.EnvVar{
 												{
-													Name: EnvHpa,
+													Name: EnvHpaName,
 													Value: ch.Spec.HpaName,
 												},
 												{
-													Name: EnvCapacity,
+													Name: EnvHpaNamespace,
+													Value: ch.Namespace,
+												},
+												{
+													Name: EnvHpaCapacity,
 													Value: capacity,
 												},
 											},
@@ -104,6 +134,7 @@ func (r *cronhpaReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 											},
 										},
 									},
+									RestartPolicy: v1.RestartPolicyOnFailure,
 									ImagePullSecrets: []v1.LocalObjectReference{
 										{
 											Name: ImagePullSecret,
